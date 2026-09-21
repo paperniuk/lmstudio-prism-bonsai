@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Uninstall Bonsai 2 runtime for LM Studio
+Comment=Double-click (the first time: right-click, Allow Launching)
+Exec=env BONSAI_PAUSE=1 bash -c "exec bash \"\\$(dirname \"\\$0\")/uninstall.sh\"" %k
+Terminal=true
+Icon=utilities-terminal

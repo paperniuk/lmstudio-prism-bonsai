@@ -1,0 +1,22 @@
+{
+  "type": "model",
+  "owner": "prism-ml",
+  "name": "ternary-bonsai-2-27b",
+  "dependencies": [
+    {
+      "type": "model",
+      "purpose": "baseModel",
+      "modelKeys": [
+        "prism-ml/ternary-bonsai-2-27b-gguf"
+      ],
+      "sources": [
+        {
+          "type": "huggingface",
+          "user": "prism-ml",
+          "repo": "Ternary-Bonsai-2-27B-gguf"
+        }
+      ]
+    }
+  ],
+  "revision": 1
+}

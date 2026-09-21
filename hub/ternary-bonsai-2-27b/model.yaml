@@ -1,0 +1,79 @@
+# model.yaml is an open standard for defining cross-platform, composable AI models
+# Learn more at https://modelyaml.org
+#
+# LM Studio virtual model for Ternary-Bonsai-2-27B GGUF. Adds the model's
+# reasoning-effort levels (xhigh / medium / low) next to the thinking toggle.
+# The GGUF's chat template reads them from the `reasoning_effort` variable.
+model: prism-ml/ternary-bonsai-2-27b
+base:
+  - key: prism-ml/ternary-bonsai-2-27b-gguf
+    sources:
+      - type: huggingface
+        user: prism-ml
+        repo: Ternary-Bonsai-2-27B-gguf
+metadataOverrides:
+  domain: llm
+  architectures:
+    - qwen35
+  compatibilityTypes:
+    - gguf
+  paramsStrings:
+    - 27B
+  minMemoryUsageBytes: 6000000000
+  contextLengths:
+    - 262144
+  vision: true
+  reasoning: true
+  trainedForToolUse: true
+config:
+  operation:
+    fields:
+      # thinking-mode sampling from the model card (also the GGUF's general.sampling.*)
+      - key: llm.prediction.temperature
+        value: 1.0
+      - key: llm.prediction.topKSampling
+        value: 20
+      - key: llm.prediction.topPSampling
+        value:
+          checked: true
+          value: 0.95
+      - key: llm.prediction.minPSampling
+        value:
+          checked: true
+          value: 0
+      - key: llm.prediction.repeatPenalty
+        value:
+          checked: false
+          value: 1.0
+customFields:
+  - key: enableThinking
+    displayName: Enable Thinking
+    description: Controls whether the model will think before replying
+    type: boolean
+    defaultValue: true
+    effects:
+      - type: setJinjaVariable
+        variable: enable_thinking
+  - key: reasoningEffort
+    displayName: Reasoning Effort
+    description: How long the model thinks. xhigh is the default and what benchmarks use; medium gives shorter answers. Low is not trained and behaves close to xhigh. Ignored when thinking is off.
+    type: select
+    options:
+      - label: xhigh
+        value: xhigh
+      - label: medium
+        value: medium
+      - label: low (≈ xhigh)
+        value: low
+    defaultValue: xhigh
+    effects:
+      - type: setJinjaVariable
+        variable: reasoning_effort
+  - key: preserveThinking
+    displayName: Preserve Thinking
+    description: Keep reasoning content in all prior assistant turns instead of only the most recent one
+    type: boolean
+    defaultValue: false
+    effects:
+      - type: setJinjaVariable
+        variable: preserve_thinking
