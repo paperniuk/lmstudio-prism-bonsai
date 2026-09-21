@@ -123,7 +123,8 @@ marked `"transitive": true` in `~/.lmstudio/.internal/model-data.json` (files
 pulled in by a virtual model). The installer sets that flag for the Bonsai 2
 files. LM Studio keeps this index in memory and rewrites it, so this step runs
 only while LM Studio is **closed**, tray icon included. Otherwise the installer
-prints a note and you rerun it after quitting LM Studio.
+prints a note. Then quit LM Studio and double-click **`Fix-Duplicates-Windows.bat`**
+(it offers to close LM Studio itself), or rerun `./install.sh` on Linux.
 
 Over the API it is the OpenAI field:
 

@@ -301,21 +301,7 @@ Say "model settings: $HubDest"
 # Files downloaded straight from Hugging Face are listed on their own, next to
 # the virtual model and without its settings. LM Studio hides base files that
 # it marks "transitive" (pulled in by a virtual model), so mark them that way.
-$modelData = Join-Path $LmHome ".internal\model-data.json"
-if (Test-Path $modelData) {
-    if (Get-Process -Name "LM Studio", "lm-studio", "llmster" -ErrorAction SilentlyContinue) {
-        Info "note: LM Studio is running - close it and rerun to hide the duplicate"
-        Info "      Ternary-Bonsai-2 .gguf entries (it rewrites its index on exit)"
-    } else {
-        $txt = [IO.File]::ReadAllText($modelData)
-        $pattern = '(\["prism-ml/Ternary-Bonsai-2-27B-gguf/[^"]+"\s*,\s*\{\s*"source"\s*:\s*\{[^}]*\}\s*,\s*"transitive"\s*:\s*)false'
-        $n = ([regex]::Matches($txt, $pattern, "IgnoreCase")).Count
-        if ($n -gt 0) {
-            Write-Json $modelData ([regex]::Replace($txt, $pattern, '${1}true', "IgnoreCase"))
-            Info "grouped $n .gguf file(s) under the virtual model"
-        } else { Info ".gguf files already grouped" }
-    }
-}
+& (Join-Path $PSScriptRoot "group-models.ps1") -Quiet
 
 # ---- select it ------------------------------------------------------------------
 if (-not $NoSelect -and (Test-Path $Lms)) {
