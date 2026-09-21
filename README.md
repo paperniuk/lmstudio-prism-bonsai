@@ -73,8 +73,12 @@ Prism's own `setup.ps1` does:
 
 | Driver supports | Prism build | CUDA runtime DLLs                        |
 | --------------- | ----------- | ---------------------------------------- |
-| CUDA ≥ 13.3     | `cuda-13.3` | downloaded from the Prism release (~370 MB) |
+| CUDA ≥ 13.3     | `cuda-13.3` | downloaded from NVIDIA's CDN (~375 MB, SHA-256 checked) |
 | CUDA 12.4–13.2  | `cuda-12.4` | copied from LM Studio's CUDA 12 vendor pack |
+
+GitHub release downloads are often slow per connection, so the Prism build is
+fetched in 16 parallel byte ranges. The CUDA DLLs come from NVIDIA's redist CDN,
+with Prism's GitHub bundle as the fallback.
 
 To force a build, run `windows\install.ps1 -Cuda 12.4` (or `-Cuda 13.3`).
 

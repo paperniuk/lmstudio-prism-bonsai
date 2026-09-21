@@ -42,6 +42,34 @@ pause_if_clicked() { [ "${BONSAI_PAUSE:-0}" = 1 ] && read -rp "press Enter to cl
 command -v python3 >/dev/null || die "python3 is required"
 command -v curl >/dev/null || die "curl is required"
 
+# GitHub release downloads can be slow per connection, so big files are fetched
+# as byte ranges in parallel and joined. Falls back to one connection.
+download() {  # url out
+  local url="$1" out="$2" parts=16 size chunk i from to pids=() ok=1
+  size="$(curl -sIL "$url" | tr -d '\r' | awk 'tolower($1)=="content-length:" {n=$2} END {print n+0}')"
+  if [ "$size" -gt 20000000 ]; then
+    chunk=$(( (size + parts - 1) / parts ))
+    for ((i = 0; i < parts; i++)); do
+      from=$(( i * chunk )); to=$(( from + chunk - 1 )); [ "$to" -lt "$size" ] || to=$(( size - 1 ))
+      curl -sfL --retry 5 --retry-delay 2 -r "$from-$to" -o "$out.part$i" "$url" & pids+=($!)
+    done
+    while kill -0 "${pids[@]}" 2>/dev/null; do
+      printf '\r    %s / %s MB ' "$(( $(cat "$out".part* 2>/dev/null | wc -c) / 1048576 ))" "$(( size / 1048576 ))"
+      sleep 1
+    done
+    echo
+    for p in "${pids[@]}"; do wait "$p" || ok=0; done
+    if [ "$ok" = 1 ]; then
+      for ((i = 0; i < parts; i++)); do cat "$out.part$i"; done > "$out"
+      rm -f "$out".part*
+      [ "$(wc -c < "$out")" -eq "$size" ] && return 0
+    fi
+    rm -f "$out" "$out".part*
+    echo "    parallel download failed, retrying with one connection"
+  fi
+  curl -fL --retry 5 --progress-bar -o "$out" "$url"
+}
+
 # ---- locate LM Studio -------------------------------------------------------
 if [ -z "${LMSTUDIO_HOME:-}" ]; then
   if [ -s "$HOME/.lmstudio-home-pointer" ]; then
@@ -89,7 +117,7 @@ else
   URL="https://github.com/$PRISM_REPO/releases/download/$PRISM_TAG/$ASSET"
   ARCHIVE="$WORK/$ASSET"
   say "downloading $ASSET (~160 MB)"
-  curl -fL --progress-bar -o "$ARCHIVE" "$URL" || die "download failed: $URL"
+  download "$URL" "$ARCHIVE" || die "download failed: $URL"
 fi
 
 mkdir -p "$WORK/x"

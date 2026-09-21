@@ -47,14 +47,85 @@ function Invoke-Lms([string[]]$lmsArgs, [int]$timeoutSec = 20) {
 }
 function Json-Str($s) { '"' + ($s -replace '\\', '\\' -replace '"', '\"' -replace "`n", '\n') + '"' }
 
-function Download($url, $out) {
+# Size of a remote file after redirects, or 0 if the server does not say.
+function Get-RemoteSize($url) {
+    $curl = Get-Command curl.exe -ErrorAction SilentlyContinue
+    if (-not $curl) { return 0 }
+    $head = Run-Native { & $curl.Source -sIL $url 2>$null }
+    $len = $head | Where-Object { $_ -match '^content-length:\s*(\d+)' } | ForEach-Object { [int64]$Matches[1] } | Select-Object -Last 1
+    if ($len) { return $len } else { return 0 }
+}
+
+# GitHub release downloads can be slow per connection, so big files are fetched
+# as $parts byte ranges in parallel and joined. Falls back to one connection.
+function Download($url, $out, [int]$parts = 16) {
     Info "downloading $(Split-Path $url -Leaf)"
     $curl = Get-Command curl.exe -ErrorAction SilentlyContinue
-    if ($curl) {
-        Run-Native { & $curl.Source -fL --progress-bar -o $out $url }
-        if ($LASTEXITCODE -ne 0) { Die "download failed: $url" }
-    } else {
-        Invoke-WebRequest -Uri $url -OutFile $out -UseBasicParsing
+    if (-not $curl) { Invoke-WebRequest -Uri $url -OutFile $out -UseBasicParsing; return }
+
+    $size = Get-RemoteSize $url
+    if ($size -gt 20MB -and $parts -gt 1) {
+        $chunk = [math]::Ceiling($size / $parts)
+        $jobs = @()
+        for ($i = 0; $i -lt $parts; $i++) {
+            $from = $i * $chunk; $to = [math]::Min($from + $chunk - 1, $size - 1)
+            $part = "$out.part$i"
+            $p = Start-Process -FilePath $curl.Source -NoNewWindow -PassThru -ArgumentList @(
+                "-sfL", "--retry", "5", "--retry-delay", "2", "-r", "$from-$to", "-o", ('"' + $part + '"'), ('"' + $url + '"'))
+            $null = $p.Handle   # keeps ExitCode readable after exit
+            $jobs += [pscustomobject]@{ Proc = $p; Part = $part; Len = $to - $from + 1 }
+        }
+        $t0 = Get-Date
+        while ($jobs | Where-Object { -not $_.Proc.HasExited }) {
+            $done = ($jobs | ForEach-Object { if (Test-Path $_.Part) { (Get-Item $_.Part).Length } else { 0 } } | Measure-Object -Sum).Sum
+            $sec = [math]::Max(((Get-Date) - $t0).TotalSeconds, 1)
+            Write-Host -NoNewline ("`r    {0,5:N1} / {1:N1} MB  {2,6:N1} Mbit/s   " -f ($done / 1MB), ($size / 1MB), ($done * 8 / 1e6 / $sec))
+            Start-Sleep -Milliseconds 700
+        }
+        Write-Host ""
+        $ok = $true
+        foreach ($j in $jobs) {
+            if ($j.Proc.ExitCode -ne 0 -or -not (Test-Path $j.Part) -or (Get-Item $j.Part).Length -ne $j.Len) { $ok = $false }
+        }
+        if ($ok) {
+            $fs = [IO.File]::Create($out)
+            try {
+                foreach ($j in $jobs) {
+                    $in = [IO.File]::OpenRead($j.Part)
+                    try { $in.CopyTo($fs) } finally { $in.Close() }
+                }
+            } finally { $fs.Close() }
+            $jobs | ForEach-Object { Remove-Item $_.Part -Force }
+            return
+        }
+        Info "parallel download failed, retrying with one connection"
+        $jobs | ForEach-Object { Remove-Item $_.Part -Force -ErrorAction SilentlyContinue }
+    }
+    Run-Native { & $curl.Source -fL --retry 5 --progress-bar -o $out $url }
+    if ($LASTEXITCODE -ne 0) { Die "download failed: $url" }
+}
+
+# cudart / cuBLAS / cuBLASLt DLLs straight from NVIDIA's redist CDN (much
+# faster than GitHub), checked against the SHA-256 in NVIDIA's manifest.
+# Returns $false if anything goes wrong, so the caller can fall back.
+function Get-NvidiaCudaDlls($cuda, $dest, $work) {
+    $redist = "https://developer.download.nvidia.com/compute/cuda/redist"
+    $manifestName = @{ "12.4" = "redistrib_12.4.1.json"; "13.3" = "redistrib_13.3.1.json" }[$cuda]
+    try {
+        $m = Invoke-RestMethod "$redist/$manifestName" -UseBasicParsing
+        foreach ($pkg in "cuda_cudart", "libcublas") {
+            $w = $m.$pkg."windows-x86_64"
+            $zip = Join-Path $work "$pkg.zip"
+            Download "$redist/$($w.relative_path)" $zip
+            if ((Get-FileHash $zip -Algorithm SHA256).Hash -ne $w.sha256.ToUpper()) { throw "sha256 mismatch for $pkg" }
+            Unzip $zip (Join-Path $work $pkg)
+            Get-ChildItem (Join-Path $work $pkg) -Recurse -Include "cudart64_*.dll", "cublas64_*.dll", "cublasLt64_*.dll" |
+                Copy-Item -Destination $dest
+        }
+        return (Test-Path (Join-Path $dest "cublasLt64_*.dll"))
+    } catch {
+        Info "NVIDIA download failed: $($_.Exception.Message)"
+        return $false
     }
 }
 
@@ -163,10 +234,14 @@ try {
         Info "CUDA 12 DLLs: reusing LM Studio's ($vendor)"
         Copy-Item (Join-Path $vendor "*.dll") $PrismDir
     } else {
-        $rt = Join-Path $Work "cudart.zip"
-        Download "$base/cudart-llama-bin-win-cuda-$Cuda-x64.zip" $rt
-        Unzip $rt (Join-Path $Work "rt")
-        Get-ChildItem (Join-Path $Work "rt") -Recurse -Filter "*.dll" | Copy-Item -Destination $PrismDir
+        Info "CUDA $Cuda DLLs: from NVIDIA (developer.download.nvidia.com)"
+        if (-not (Get-NvidiaCudaDlls $Cuda $PrismDir $Work)) {
+            Info "falling back to Prism's cudart bundle on GitHub"
+            $rt = Join-Path $Work "cudart.zip"
+            Download "$base/cudart-llama-bin-win-cuda-$Cuda-x64.zip" $rt
+            Unzip $rt (Join-Path $Work "rt")
+            Get-ChildItem (Join-Path $Work "rt") -Recurse -Filter "*.dll" | Copy-Item -Destination $PrismDir
+        }
     }
     Set-Content -Path (Join-Path $PrismDir "PRISM_VERSION") -Value "$PrismTag cuda-$Cuda"
 
